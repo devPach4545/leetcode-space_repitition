@@ -4,7 +4,24 @@ const Database = require('better-sqlite3');
 const dayjs = require('dayjs');
 
 const app = express();
-const db = new Database('leetcode.db');
+const path = require('path');
+const fs = require('fs');
+
+// Open database with explicit write access using absolute path
+const dbPath = path.join(__dirname, 'leetcode.db');
+
+// Ensure database file is writable
+try {
+  if (fs.existsSync(dbPath)) {
+    fs.chmodSync(dbPath, 0o664);
+  }
+} catch (err) {
+  console.warn('Could not set database permissions:', err.message);
+}
+
+const db = new Database(dbPath);
+// Enable foreign keys
+db.pragma('foreign_keys = ON');
 
 app.use(cors());
 app.use(express.json());
@@ -31,10 +48,16 @@ db.exec(`
 `);
 
 // Add notes column to existing questions table if it doesn't exist
+// SQLite doesn't support IF NOT EXISTS for ALTER TABLE, so we check first
 try {
-  db.exec(`ALTER TABLE questions ADD COLUMN notes TEXT DEFAULT ''`);
+  const tableInfo = db.prepare("PRAGMA table_info(questions)").all();
+  const hasNotesColumn = tableInfo.some(col => col.name === 'notes');
+  if (!hasNotesColumn) {
+    db.exec(`ALTER TABLE questions ADD COLUMN notes TEXT DEFAULT ''`);
+    console.log('Added notes column to questions table');
+  }
 } catch (error) {
-  // Column already exists, ignore
+  console.error('Error checking/adding notes column:', error);
 }
 
 // --- Helper: Spaced Repetition Calculator ---
@@ -118,9 +141,13 @@ app.put('/api/questions/:id/notes', (req, res) => {
   
   try {
     const stmt = db.prepare('UPDATE questions SET notes = ? WHERE id = ?');
-    stmt.run(notes || '', id);
+    const result = stmt.run(notes || '', id);
+    if (result.changes === 0) {
+      return res.status(404).json({ error: 'Question not found' });
+    }
     res.json({ success: true });
   } catch (error) {
+    console.error('Error updating notes:', error);
     res.status(500).json({ error: error.message });
   }
 });

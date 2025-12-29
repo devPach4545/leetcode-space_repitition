@@ -29,11 +29,28 @@ function App() {
       statsMap[item.due_date] = item.count;
     });
     setCalendarStats(statsMap);
+    
+    return tasksRes.data; // Return tasks for use after save
   };
 
   useEffect(() => {
     fetchData();
   }, [selectedDate]);
+
+  // Initialize editing notes when tasks are loaded and notes section is expanded
+  useEffect(() => {
+    setEditingNotes(prev => {
+      const newEditingNotes = { ...prev };
+      let changed = false;
+      tasks.forEach(task => {
+        if (expandedTasks.has(task.id) && !newEditingNotes[task.question_id]) {
+          newEditingNotes[task.question_id] = parseNotes(task.notes || '');
+          changed = true;
+        }
+      });
+      return changed ? newEditingNotes : prev;
+    });
+  }, [tasks, expandedTasks]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -54,6 +71,15 @@ function App() {
       newExpanded.delete(taskId);
     } else {
       newExpanded.add(taskId);
+      // Initialize editing notes when expanding if not already set
+      const task = tasks.find(t => t.id === taskId);
+      if (task && !editingNotes[task.question_id]) {
+        const notes = parseNotes(task.notes || '');
+        setEditingNotes(prev => ({
+          ...prev,
+          [task.question_id]: notes
+        }));
+      }
     }
     setExpandedTasks(newExpanded);
   };
@@ -89,16 +115,35 @@ function App() {
     const notesString = JSON.stringify(notesData);
     
     try {
-      await axios.put(`${API_URL}/questions/${questionId}/notes`, { notes: notesString });
-      fetchData();
-      // Remove from editing state after save
-      setEditingNotes(prev => {
-        const newState = { ...prev };
-        delete newState[questionId];
-        return newState;
-      });
+      const response = await axios.put(`${API_URL}/questions/${questionId}/notes`, { notes: notesString });
+      if (response.data.success) {
+        // Wait for data to refresh and get updated tasks
+        const updatedTasks = await fetchData();
+        // Update editing state with the saved notes from the database
+        // This ensures the UI reflects what's actually saved
+        const updatedTask = updatedTasks.find(t => t.question_id === questionId);
+        if (updatedTask) {
+          const savedNotes = parseNotes(updatedTask.notes || '');
+          setEditingNotes(prev => ({
+            ...prev,
+            [questionId]: savedNotes
+          }));
+        } else {
+          // If task not found, just remove from editing state
+          setEditingNotes(prev => {
+            const newState = { ...prev };
+            delete newState[questionId];
+            return newState;
+          });
+        }
+      }
     } catch (error) {
       console.error('Failed to save notes:', error);
+      if (error.response) {
+        alert(`Failed to save notes: ${error.response.data.error || error.message}`);
+      } else {
+        alert('Failed to save notes. Please check your connection and try again.');
+      }
     }
   };
 
