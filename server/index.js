@@ -17,7 +17,8 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS questions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    notes TEXT DEFAULT ''
   );
   
   CREATE TABLE IF NOT EXISTS schedule (
@@ -28,6 +29,13 @@ db.exec(`
     FOREIGN KEY (question_id) REFERENCES questions (id)
   );
 `);
+
+// Add notes column to existing questions table if it doesn't exist
+try {
+  db.exec(`ALTER TABLE questions ADD COLUMN notes TEXT DEFAULT ''`);
+} catch (error) {
+  // Column already exists, ignore
+}
 
 // --- Helper: Spaced Repetition Calculator ---
 const INTERVALS = [1, 3, 6, 12, 24, 48];
@@ -74,7 +82,7 @@ app.get('/api/schedule', (req, res) => {
   const targetDate = date || dayjs().format('YYYY-MM-DD');
 
   const stmt = db.prepare(`
-    SELECT s.id, s.due_date, s.completed, q.title 
+    SELECT s.id, s.due_date, s.completed, q.title, q.id as question_id, q.notes
     FROM schedule s
     JOIN questions q ON s.question_id = q.id
     WHERE s.due_date = ?
@@ -101,6 +109,33 @@ app.get('/api/calendar-stats', (req, res) => {
     GROUP BY due_date
   `);
   res.json(stmt.all());
+});
+
+// 5. Update notes for a question
+app.put('/api/questions/:id/notes', (req, res) => {
+  const { id } = req.params;
+  const { notes } = req.body;
+  
+  try {
+    const stmt = db.prepare('UPDATE questions SET notes = ? WHERE id = ?');
+    stmt.run(notes || '', id);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 6. Get notes for a question
+app.get('/api/questions/:id/notes', (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    const stmt = db.prepare('SELECT notes FROM questions WHERE id = ?');
+    const result = stmt.get(id);
+    res.json({ notes: result?.notes || '' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 app.listen(3001, () => {

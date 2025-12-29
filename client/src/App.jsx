@@ -13,6 +13,8 @@ function App() {
   const [currentMonth, setCurrentMonth] = useState(dayjs()); 
   const [tasks, setTasks] = useState([]);
   const [calendarStats, setCalendarStats] = useState({});
+  const [expandedTasks, setExpandedTasks] = useState(new Set());
+  const [editingNotes, setEditingNotes] = useState({});
 
   // Fetch data
   const fetchData = async () => {
@@ -44,6 +46,60 @@ function App() {
   const toggleTask = async (id) => {
     await axios.post(`${API_URL}/schedule/${id}/toggle`);
     fetchData();
+  };
+
+  const toggleNotes = (taskId) => {
+    const newExpanded = new Set(expandedTasks);
+    if (newExpanded.has(taskId)) {
+      newExpanded.delete(taskId);
+    } else {
+      newExpanded.add(taskId);
+    }
+    setExpandedTasks(newExpanded);
+  };
+
+  const parseNotes = (notesString) => {
+    if (!notesString) return { bruteForce: '', optimized: '' };
+    try {
+      const parsed = JSON.parse(notesString);
+      return {
+        bruteForce: parsed.bruteForce || '',
+        optimized: parsed.optimized || ''
+      };
+    } catch {
+      return { bruteForce: notesString, optimized: '' };
+    }
+  };
+
+  const handleNotesChange = (questionId, field, value) => {
+    setEditingNotes(prev => {
+      const current = prev[questionId] || parseNotes(tasks.find(t => t.question_id === questionId)?.notes || '');
+      return {
+        ...prev,
+        [questionId]: {
+          ...current,
+          [field]: value
+        }
+      };
+    });
+  };
+
+  const saveNotes = async (questionId) => {
+    const notesData = editingNotes[questionId] || parseNotes(tasks.find(t => t.question_id === questionId)?.notes || '');
+    const notesString = JSON.stringify(notesData);
+    
+    try {
+      await axios.put(`${API_URL}/questions/${questionId}/notes`, { notes: notesString });
+      fetchData();
+      // Remove from editing state after save
+      setEditingNotes(prev => {
+        const newState = { ...prev };
+        delete newState[questionId];
+        return newState;
+      });
+    } catch (error) {
+      console.error('Failed to save notes:', error);
+    }
   };
 
   // --- Calendar Logic ---
@@ -153,30 +209,98 @@ function App() {
                 <p className="text-xs mt-2">Add a new question or select another date.</p>
               </div>
             ) : (
-              tasks.map(task => (
-                <div 
-                  key={task.id} 
-                  className={`group flex items-center justify-between p-3 rounded-lg border transition-all ${
-                    task.completed 
-                      ? 'bg-gray-50 border-gray-100' 
-                      : 'bg-white border-gray-200 hover:border-indigo-300 shadow-sm'
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <div 
-                      onClick={() => toggleTask(task.id)}
-                      className={`w-5 h-5 rounded-full border cursor-pointer flex items-center justify-center transition-colors ${
-                        task.completed ? 'bg-green-500 border-green-500' : 'border-gray-400 hover:border-indigo-500'
-                      }`}
-                    >
-                      {task.completed && <span className="text-white text-xs">✓</span>}
+              tasks.map(task => {
+                const isExpanded = expandedTasks.has(task.id);
+                const notes = parseNotes(task.notes || '');
+                const editingNote = editingNotes[task.question_id] || notes;
+                const hasUnsavedChanges = JSON.stringify(editingNote) !== JSON.stringify(notes);
+
+                return (
+                  <div 
+                    key={task.id} 
+                    className={`rounded-lg border transition-all ${
+                      task.completed 
+                        ? 'bg-gray-50 border-gray-100' 
+                        : 'bg-white border-gray-200 hover:border-indigo-300 shadow-sm'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between p-3">
+                      <div className="flex items-center gap-3 flex-1">
+                        <div 
+                          onClick={() => toggleTask(task.id)}
+                          className={`w-5 h-5 rounded-full border cursor-pointer flex items-center justify-center transition-colors ${
+                            task.completed ? 'bg-green-500 border-green-500' : 'border-gray-400 hover:border-indigo-500'
+                          }`}
+                        >
+                          {task.completed && <span className="text-white text-xs">✓</span>}
+                        </div>
+                        <span className={`text-sm flex-1 ${task.completed ? 'line-through text-gray-400' : 'text-gray-700 font-medium'}`}>
+                          {task.title}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => toggleNotes(task.id)}
+                        className="text-xs text-indigo-600 hover:text-indigo-800 font-medium px-2 py-1"
+                      >
+                        {isExpanded ? 'Hide Notes' : 'Show Notes'}
+                      </button>
                     </div>
-                    <span className={`text-sm ${task.completed ? 'line-through text-gray-400' : 'text-gray-700 font-medium'}`}>
-                      {task.title}
-                    </span>
+                    
+                    {isExpanded && (
+                      <div className="px-3 pb-3 border-t border-gray-100 pt-3 mt-2">
+                        <div className="space-y-4">
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-700 mb-1">
+                              Brute Force Approach
+                            </label>
+                            <textarea
+                              value={editingNote.bruteForce}
+                              onChange={(e) => handleNotesChange(task.question_id, 'bruteForce', e.target.value)}
+                              placeholder="Write your brute force approach here..."
+                              className="w-full p-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-indigo-500 resize-none"
+                              rows={4}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-700 mb-1">
+                              Optimized Approach
+                            </label>
+                            <textarea
+                              value={editingNote.optimized}
+                              onChange={(e) => handleNotesChange(task.question_id, 'optimized', e.target.value)}
+                              placeholder="Write your optimized approach here..."
+                              className="w-full p-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-indigo-500 resize-none"
+                              rows={4}
+                            />
+                          </div>
+                          {hasUnsavedChanges && (
+                            <div className="flex justify-end gap-2">
+                              <button
+                                onClick={() => {
+                                  setEditingNotes(prev => {
+                                    const newState = { ...prev };
+                                    delete newState[task.question_id];
+                                    return newState;
+                                  });
+                                }}
+                                className="px-3 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50 text-gray-700"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                onClick={() => saveNotes(task.question_id)}
+                                className="px-3 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                              >
+                                Save Notes
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
